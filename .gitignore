@@ -1,0 +1,12 @@
+.env
+.envrc
+CLAUDE.md
+uv.toml
+.venv
+__pycache__/
+*.pyc
+*.pyo
+.coverage
+htmlcov/
+dist/
+*.egg-info/
