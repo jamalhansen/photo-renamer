@@ -10,3 +10,10 @@ __pycache__/
 htmlcov/
 dist/
 *.egg-info/
+
+# Workspace standard ignores
+*.pyd
+.DS_Store
+.pytest_cache/
+.ruff_cache/
+.venv/
