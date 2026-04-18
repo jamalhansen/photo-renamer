@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -17,11 +18,12 @@ from local_first_common.cli import (
     resolve_dry_run,
     resolve_provider,
     verbose_option,
+    pipe_option,
 )
 from local_first_common.tracking import register_tool, timed_run
 
 _TOOL = register_tool("photo-renamer")
-console = Console()
+console = Console(stderr=True) # Rich output to stderr
 app = typer.Typer(help="Uses a vision model to generate descriptive filenames for photos.")
 
 def slugify(text: str) -> str:
@@ -34,21 +36,24 @@ def slugify(text: str) -> str:
 def get_short_hash(file_path: Path) -> str:
     """Generate a short hash for the file content to avoid collisions."""
     hasher = hashlib.md5()
-    with open(file_path, "rb") as f:
-        # Just read the first 1MB for speed
-        buf = f.read(1024 * 1024)
-        hasher.update(buf)
-    return hasher.hexdigest()[:6]
+    try:
+        with open(file_path, "rb") as f:
+            buf = f.read(1024 * 1024)
+            hasher.update(buf)
+        return hasher.hexdigest()[:6]
+    except Exception:
+        return "000000"
 
 def rename_photo(
     image_path: Path,
     llm,
     dry_run: bool = False,
     verbose: bool = False,
+    silent: bool = False,
 ) -> Optional[Path]:
     """Analyze photo with vision LLM and rename based on description."""
     try:
-        if verbose:
+        if verbose and not silent:
             console.print(f"[dim]Analyzing {image_path.name}...[/dim]")
 
         system_prompt = "You are a helpful assistant that describes images for file naming purposes."
@@ -61,10 +66,10 @@ def rename_photo(
                 images=[image_path.as_posix()],
             )
             _run.item_count = 1
-            # Token counts are handled by the provider if available
 
         if not description:
-            console.print(f"[red]Failed to get description for {image_path.name}[/red]")
+            if not silent:
+                console.print(f"[red]Failed to get description for {image_path.name}[/red]")
             return None
 
         slug = slugify(description)
@@ -73,62 +78,83 @@ def rename_photo(
         new_path = image_path.parent / new_name
 
         if dry_run:
-            console.print(f"[yellow][dry-run] Would rename {image_path.name} -> {new_name}[/yellow]")
+            if not silent:
+                console.print(f"[yellow][dry-run] Would rename {image_path.name} -> {new_name}[/yellow]")
             return new_path
 
         if image_path.name == new_name:
-            console.print(f"[dim]{image_path.name} is already correctly named.[/dim]")
+            if not silent:
+                console.print(f"[dim]{image_path.name} is already correctly named.[/dim]")
             return image_path
 
         os.rename(image_path, new_path)
-        console.print(f"[green]Renamed {image_path.name} -> {new_name}[/green]")
+        if not silent:
+            console.print(f"[green]Renamed {image_path.name} -> {new_name}[/green]")
         return new_path
 
     except Exception as e:
-        console.print(f"[red]Error processing {image_path.name}: {e}[/red]")
+        if not silent:
+            console.print(f"[red]Error processing {image_path.name}: {e}[/red]")
         return None
 
 @app.command()
 def rename(
-    path: Annotated[Path, typer.Argument(help="File or directory to rename")],
+    path: Annotated[Optional[Path], typer.Argument(help="File or directory to rename")] = None,
     provider: Annotated[str, provider_option()] = "ollama",
     model: Annotated[Optional[str], model_option()] = "@vision",
     dry_run: Annotated[bool, dry_run_option()] = False,
     no_llm: Annotated[bool, no_llm_option()] = False,
     verbose: Annotated[bool, verbose_option()] = False,
     debug: Annotated[bool, debug_option()] = False,
+    pipe: Annotated[bool, pipe_option()] = False,
 ):
     """Analyze photos and rename them with descriptive slugs."""
     dry_run = resolve_dry_run(dry_run, no_llm)
     llm = resolve_provider(provider_name=provider, model=model, no_llm=no_llm, verbose=verbose, debug=debug)
 
-    if not path.exists():
-        console.print(f"[red]Path does not exist: {path}[/red]")
-        raise typer.Exit(1)
-
+    # Handle stdin for piping
     files_to_process = []
-    if path.is_file():
-        files_to_process.append(path)
-    elif path.is_dir():
-        for ext in (".jpg", ".jpeg", ".png", ".tiff", ".webp"):
-            files_to_process.extend(path.glob(f"*{ext}"))
-            files_to_process.extend(path.glob(f"*{ext.upper()}"))
+    if path is None:
+        if not sys.stdin.isatty():
+            for line in sys.stdin:
+                p = Path(line.strip())
+                if p.exists():
+                    files_to_process.append(p)
+        else:
+            console.print("[red]Error: No path provided and no stdin detected.[/red]")
+            raise typer.Exit(1)
+    else:
+        if not path.exists():
+            console.print(f"[red]Path does not exist: {path}[/red]")
+            raise typer.Exit(1)
+        if path.is_file():
+            files_to_process.append(path)
+        elif path.is_dir():
+            for ext in (".jpg", ".jpeg", ".png", ".tiff", ".webp"):
+                files_to_process.extend(path.glob(f"*{ext}"))
+                files_to_process.extend(path.glob(f"*{ext.upper()}"))
 
     if not files_to_process:
-        console.print(f"No photos found in {path}")
+        if not pipe:
+            console.print("No photos found.")
         return
 
-    console.print(Panel(f"Analyzing {len(files_to_process)} photos with {llm.model}...", title="Photo Renamer", border_style="cyan"))
+    if not pipe:
+        console.print(Panel(f"Analyzing {len(files_to_process)} photos with {llm.model}...", title="Photo Renamer", border_style="cyan"))
 
     renamed_count = 0
     for file in files_to_process:
-        if rename_photo(file, llm, dry_run=dry_run, verbose=verbose):
+        new_path = rename_photo(file, llm, dry_run=dry_run, verbose=verbose, silent=pipe)
+        if new_path:
             renamed_count += 1
+            if pipe:
+                print(new_path.absolute())
 
-    if not dry_run:
-        console.print(f"\n[bold green]Done! Renamed {renamed_count} photos.[/bold green]")
-    else:
-        console.print(f"\n[yellow][dry-run] Would have renamed {renamed_count} photos.[/yellow]")
+    if not pipe:
+        if not dry_run:
+            console.print(f"\n[bold green]Done! Renamed {renamed_count} photos.[/bold green]")
+        else:
+            console.print(f"\n[yellow][dry-run] Would have renamed {renamed_count} photos.[/yellow]")
 
 if __name__ == "__main__":
     app()
