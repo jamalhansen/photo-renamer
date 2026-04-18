@@ -19,10 +19,15 @@ from local_first_common.cli import (
     resolve_provider,
     verbose_option,
     pipe_option,
+    init_config_option,
 )
+from local_first_common.config import get_setting
 from local_first_common.tracking import register_tool, timed_run
 
-_TOOL = register_tool("photo-renamer")
+TOOL_NAME = "photo-renamer"
+DEFAULTS = {"provider": "ollama", "model": "llama3"}
+_TOOL = register_tool(TOOL_NAME)
+
 console = Console(stderr=True) # Rich output to stderr
 app = typer.Typer(help="Uses a vision model to generate descriptive filenames for photos.")
 
@@ -99,18 +104,21 @@ def rename_photo(
 
 @app.command()
 def rename(
-    path: Annotated[Optional[Path], typer.Argument(help="File or directory to rename")] = None,
-    provider: Annotated[str, provider_option()] = "ollama",
-    model: Annotated[Optional[str], model_option()] = "@vision",
+    path: Optional[Path] = typer.Argument(None, help="File or directory to rename"),
+    provider: Annotated[str, provider_option()] = os.environ.get("MODEL_PROVIDER", "ollama"),
+    model: Annotated[Optional[str], model_option()] = None,
     dry_run: Annotated[bool, dry_run_option()] = False,
     no_llm: Annotated[bool, no_llm_option()] = False,
     verbose: Annotated[bool, verbose_option()] = False,
     debug: Annotated[bool, debug_option()] = False,
     pipe: Annotated[bool, pipe_option()] = False,
+    init_config: Annotated[bool, init_config_option(TOOL_NAME, DEFAULTS)] = False,
 ):
     """Analyze photos and rename them with descriptive slugs."""
+    actual_provider = get_setting(TOOL_NAME, "provider", cli_val=provider, default="ollama")
+    actual_model = get_setting(TOOL_NAME, "model", cli_val=model)
     dry_run = resolve_dry_run(dry_run, no_llm)
-    llm = resolve_provider(provider_name=provider, model=model, no_llm=no_llm, verbose=verbose, debug=debug)
+    llm = resolve_provider(provider_name=actual_provider, model=actual_model, no_llm=no_llm, verbose=verbose, debug=debug)
 
     # Handle stdin for piping
     files_to_process = []

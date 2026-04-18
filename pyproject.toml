@@ -8,6 +8,7 @@ dependencies = [
     "rich>=14.3.3",
     "pillow>=10.2.0",
     "local-first-common",
+    "toml>=0.10.2",
 ]
 
 [project.scripts]
@@ -27,7 +28,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-local-first-common = { git = "https://github.com/jamalhansen/local-first-common.git", branch = "main" }
+local-first-common = {path = "../local-first-common", editable = true}
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
