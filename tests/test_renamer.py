@@ -3,7 +3,15 @@ from pathlib import Path
 from PIL import Image
 from typer.testing import CliRunner
 
-from photo_renamer.logic import app, get_short_hash, rename_photo, slugify
+from photo_renamer.logic import (
+    EmptyDescriptionError,
+    ProviderCallError,
+    app,
+    get_short_hash,
+    rename_photo,
+    rename_photo_or_raise,
+    slugify,
+)
 from local_first_common.testing import MockProvider
 
 
@@ -67,6 +75,18 @@ def test_rename_photo_returns_none_when_description_missing(tmp_path):
     assert img_path.exists()
 
 
+def test_rename_photo_or_raise_raises_on_missing_description(tmp_path):
+    img_path = create_test_image(tmp_path, "original.jpg")
+    llm = MockProvider(response="")
+
+    try:
+        rename_photo_or_raise(img_path, llm, silent=True)
+    except EmptyDescriptionError:
+        pass
+    else:
+        raise AssertionError("Expected EmptyDescriptionError")
+
+
 def test_rename_photo_returns_same_path_when_already_named(tmp_path):
     llm = MockProvider(response="Golden Gate Bridge Fog")
     original = create_test_image(tmp_path, "seed.jpg")
@@ -92,6 +112,23 @@ def test_rename_photo_returns_none_on_llm_exception(tmp_path):
 
     assert result is None
     assert img_path.exists()
+
+
+def test_rename_photo_or_raise_raises_on_llm_exception(tmp_path):
+    class BrokenProvider:
+        model = "broken-model"
+
+        def complete(self, *_args, **_kwargs):
+            raise RuntimeError("boom")
+
+    img_path = create_test_image(tmp_path, "original.jpg")
+
+    try:
+        rename_photo_or_raise(img_path, BrokenProvider(), silent=True)
+    except ProviderCallError:
+        pass
+    else:
+        raise AssertionError("Expected ProviderCallError")
 
 
 def test_rename_command_missing_path_exits_nonzero(tmp_path):
