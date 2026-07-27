@@ -20,3 +20,4 @@ dist/
 
 # Workspace standard ignores
 __pycache__
+_NOTES.md
