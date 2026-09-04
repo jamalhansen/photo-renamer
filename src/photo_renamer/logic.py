@@ -1,8 +1,11 @@
+import base64
 import hashlib
 import os
 import re
+import sqlite3
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -23,11 +26,31 @@ from local_first_common.cli import (
     init_config_option,
 )
 from local_first_common.config import get_setting
+from local_first_common.db import init_db, resolve_sync_path
+from local_first_common.llm import parse_json_response, try_xml_parse
 from local_first_common.tracking import register_tool, timed_run
 
 TOOL_NAME = "photo-renamer"
 DEFAULTS = {"provider": "ollama", "model": "llama3"}
 _TOOL = register_tool(TOOL_NAME)
+
+# Fixed taxonomy so downstream catalog queries (e.g. "give me newsletter-ready
+# landscape photos") have a stable, small set of values to filter on.
+CATEGORIES = ("people", "landscape", "event", "food", "product", "screenshot", "other")
+
+CATALOG_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS photos (
+    id INTEGER PRIMARY KEY,
+    original_path TEXT NOT NULL,
+    current_path TEXT NOT NULL,
+    category TEXT,
+    description TEXT,
+    scrubbed INTEGER DEFAULT 0,
+    scaled INTEGER DEFAULT 0,
+    max_dimension INTEGER,
+    processed_at TEXT
+);
+"""
 
 console = Console(stderr=True)  # Rich output to stderr
 app = typer.Typer(
@@ -55,6 +78,8 @@ class FileRenameError(PhotoRenamerError):
 class RenamePhotoResult:
     path: Path
     action: str
+    description: str = ""
+    category: str = "other"
 
 
 def slugify(text: str) -> str:
@@ -63,6 +88,78 @@ def slugify(text: str) -> str:
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[\s_-]+", "-", text)
     return text.strip("-")
+
+
+def parse_description_and_category(raw: str) -> tuple[str, str]:
+    """Extract (description, category) from a vision-model response.
+
+    Tries JSON first, then an XML-tag fallback (local models under token
+    pressure are often more reliable with XML than strict JSON -- same
+    pattern as local_first_common.scoring.BaseScorer). If both fail, the
+    raw text is treated as the description with category "other" -- this
+    keeps the tool's original plain-description behavior as the final
+    fallback rather than raising, since renaming should not fail just
+    because categorization did.
+    """
+    try:
+        data = parse_json_response(raw)
+        description = str(data.get("description", "")).strip()
+        category = str(data.get("category", "other")).strip().lower()
+        if description:
+            return description, category if category in CATEGORIES else "other"
+    except (ValueError, KeyError, TypeError):
+        pass
+
+    xml = try_xml_parse(raw, ["description", "category"])
+    if xml:
+        description = xml.get("description", "").strip()
+        category = xml.get("category", "other").strip().lower()
+        if description:
+            return description, category if category in CATEGORIES else "other"
+
+    return raw.strip(), "other"
+
+
+def write_catalog_entry(
+    catalog_db: Path,
+    original_path: Path,
+    current_path: Path,
+    category: str,
+    description: str,
+) -> None:
+    """Insert one row into the photo catalog. Fire-and-forget: never raises,
+    so a catalog write failure never breaks a rename that already succeeded.
+    """
+    try:
+        init_db(catalog_db, CATALOG_SCHEMA_SQL)
+        conn = sqlite3.connect(str(catalog_db))
+        try:
+            conn.execute(
+                "INSERT INTO photos (original_path, current_path, category, "
+                "description, processed_at) VALUES (?, ?, ?, ?, ?)",
+                (
+                    str(original_path),
+                    str(current_path),
+                    category,
+                    description,
+                    datetime.now().isoformat(),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[yellow]Catalog write failed (rename still succeeded): {e}[/yellow]")
+
+
+def encode_image_base64(image_path: Path) -> str:
+    """Read an image file and return its base64-encoded contents.
+
+    The BaseProvider abstraction's `images=` parameter expects already-encoded
+    base64 data (see AnthropicProvider._build_messages and
+    OllamaProvider._build_payload), not a file path.
+    """
+    return base64.b64encode(image_path.read_bytes()).decode("ascii")
 
 
 def get_short_hash(file_path: Path) -> str:
@@ -83,8 +180,11 @@ def rename_photo_or_raise(
     dry_run: bool = False,
     verbose: bool = False,
     silent: bool = False,
+    catalog_db: Optional[Path] = None,
 ) -> RenamePhotoResult:
-    """Analyze photo with vision LLM and rename based on description.
+    """Analyze photo with vision LLM, rename based on description, and
+    optionally record a catalog row (description + category) if catalog_db
+    is given.
 
     Raises typed errors for provider and file-operation failures.
     """
@@ -92,18 +192,29 @@ def rename_photo_or_raise(
         console.print(f"[dim]Analyzing {image_path.name}...[/dim]")
 
     system_prompt = (
-        "You are a helpful assistant that describes images for file naming purposes."
+        "You are a helpful assistant that describes images for file naming "
+        "and cataloging purposes."
     )
-    user_prompt = "Describe this image in 4 to 6 descriptive words. Return ONLY the description, no other text."
+    user_prompt = (
+        "Look at this image and respond with a JSON object with exactly two "
+        'fields: "description" (4 to 6 descriptive words suitable for a '
+        f'filename) and "category" (exactly one of: {", ".join(CATEGORIES)}). '
+        "Return ONLY the JSON object, no other text."
+    )
+
+    try:
+        encoded_image = encode_image_base64(image_path)
+    except OSError as e:
+        raise PhotoRenamerError(f"Could not read {image_path.name}: {e}") from e
 
     with timed_run(
         "photo-renamer", llm.model, source_location=image_path.as_posix()
     ) as _run:
         try:
-            description = llm.complete(
+            raw_response = llm.complete(
                 system_prompt,
                 user_prompt,
-                images=[image_path.as_posix()],
+                images=[encoded_image],
             )
         except Exception as e:  # noqa: BLE001
             raise ProviderCallError(
@@ -111,9 +222,15 @@ def rename_photo_or_raise(
             ) from e
         _run.item_count = 1
 
-    if not description:
+    if not raw_response:
         raise EmptyDescriptionError(
             f"Model returned no description for {image_path.name}"
+        )
+
+    description, category = parse_description_and_category(raw_response)
+    if not description:
+        raise EmptyDescriptionError(
+            f"Model returned no usable description for {image_path.name}"
         )
 
     slug = slugify(description)
@@ -124,23 +241,36 @@ def rename_photo_or_raise(
     if dry_run:
         if not silent:
             console.print(
-                f"[yellow][dry-run] Would rename {image_path.name} -> {new_name}[/yellow]"
+                f"[yellow][dry-run] Would rename {image_path.name} -> {new_name} "
+                f"(category: {category})[/yellow]"
             )
-        return RenamePhotoResult(path=new_path, action="dry_run")
+        return RenamePhotoResult(
+            path=new_path, action="dry_run", description=description, category=category
+        )
 
     if image_path.name == new_name:
         if not silent:
             console.print(f"[dim]{image_path.name} is already correctly named.[/dim]")
-        return RenamePhotoResult(path=image_path, action="unchanged")
+        return RenamePhotoResult(
+            path=image_path, action="unchanged", description=description, category=category
+        )
 
     try:
         os.rename(image_path, new_path)
     except OSError as e:
         raise FileRenameError(f"Could not rename {image_path.name}: {e}") from e
 
+    if catalog_db is not None:
+        write_catalog_entry(catalog_db, image_path, new_path, category, description)
+
     if not silent:
-        console.print(f"[green]Renamed {image_path.name} -> {new_name}[/green]")
-    return RenamePhotoResult(path=new_path, action="renamed")
+        console.print(
+            f"[green]Renamed {image_path.name} -> {new_name}[/green] "
+            f"[dim](category: {category})[/dim]"
+        )
+    return RenamePhotoResult(
+        path=new_path, action="renamed", description=description, category=category
+    )
 
 
 def rename_photo(
@@ -149,6 +279,7 @@ def rename_photo(
     dry_run: bool = False,
     verbose: bool = False,
     silent: bool = False,
+    catalog_db: Optional[Path] = None,
 ) -> Optional[Path]:
     """Compatibility wrapper for callers that expect Optional[Path]."""
     try:
@@ -158,6 +289,7 @@ def rename_photo(
             dry_run=dry_run,
             verbose=verbose,
             silent=silent,
+            catalog_db=catalog_db,
         )
         return result.path
     except PhotoRenamerError as e:
@@ -179,6 +311,18 @@ def rename(
     debug: Annotated[bool, debug_option()] = False,
     pipe: Annotated[bool, pipe_option()] = False,
     init_config: Annotated[bool, init_config_option(TOOL_NAME, DEFAULTS)] = False,
+    catalog: Annotated[
+        bool,
+        typer.Option(
+            "--catalog", help="Record a catalog row (description + category) for each rename"
+        ),
+    ] = False,
+    catalog_db: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--catalog-db", help="Catalog database path (default: ~/sync/photo-catalog/store.db)"
+        ),
+    ] = None,
 ):
     """Analyze photos and rename them with descriptive slugs."""
     actual_provider = get_setting(
@@ -193,6 +337,11 @@ def rename(
         verbose=verbose,
         debug=debug,
     )
+    resolved_catalog_db = None
+    if catalog:
+        resolved_catalog_db = catalog_db or resolve_sync_path(
+            "photo-catalog", "store.db"
+        )
 
     # Handle stdin for piping
     files_to_process = []
@@ -239,6 +388,7 @@ def rename(
                 dry_run=dry_run,
                 verbose=verbose,
                 silent=pipe,
+                catalog_db=resolved_catalog_db,
             )
         except PhotoRenamerError as e:
             if not pipe:

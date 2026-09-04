@@ -8,6 +8,7 @@ from photo_renamer.logic import (
     ProviderCallError,
     app,
     get_short_hash,
+    parse_description_and_category,
     rename_photo,
     rename_photo_or_raise,
     slugify,
@@ -137,3 +138,89 @@ def test_rename_command_missing_path_exits_nonzero(tmp_path):
     result = runner.invoke(app, [str(missing), "--no-llm"])
 
     assert result.exit_code == 1
+
+
+def test_parse_description_and_category_json():
+    raw = '{"description": "golden gate bridge fog", "category": "landscape"}'
+
+    description, category = parse_description_and_category(raw)
+
+    assert description == "golden gate bridge fog"
+    assert category == "landscape"
+
+
+def test_parse_description_and_category_json_in_fences():
+    raw = '```json\n{"description": "birthday cake candles", "category": "event"}\n```'
+
+    description, category = parse_description_and_category(raw)
+
+    assert description == "birthday cake candles"
+    assert category == "event"
+
+
+def test_parse_description_and_category_unknown_category_falls_back_to_other():
+    raw = '{"description": "a cat on a windowsill", "category": "not-a-real-category"}'
+
+    description, category = parse_description_and_category(raw)
+
+    assert description == "a cat on a windowsill"
+    assert category == "other"
+
+
+def test_parse_description_and_category_xml_fallback():
+    raw = "<description>san francisco skyline</description><category>landscape</category>"
+
+    description, category = parse_description_and_category(raw)
+
+    assert description == "san francisco skyline"
+    assert category == "landscape"
+
+
+def test_parse_description_and_category_plain_text_fallback():
+    """Matches the tool's original pre-catalog behavior: a plain-text response
+    (no JSON, no XML) is used directly as the description with category "other"."""
+    raw = "Golden Gate Bridge Fog"
+
+    description, category = parse_description_and_category(raw)
+
+    assert description == "Golden Gate Bridge Fog"
+    assert category == "other"
+
+
+def test_rename_photo_writes_catalog_entry(tmp_path):
+    import sqlite3
+
+    img_path = create_test_image(tmp_path, "original.jpg")
+    catalog_db = tmp_path / "catalog" / "store.db"
+    llm = MockProvider(
+        response='{"description": "golden gate bridge fog", "category": "landscape"}'
+    )
+
+    result = rename_photo_or_raise(img_path, llm, catalog_db=catalog_db)
+
+    assert catalog_db.exists()
+    conn = sqlite3.connect(str(catalog_db))
+    try:
+        row = conn.execute(
+            "SELECT original_path, current_path, category, description FROM photos"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row is not None
+    assert row[0] == str(img_path)
+    assert row[1] == str(result.path)
+    assert row[2] == "landscape"
+    assert row[3] == "golden gate bridge fog"
+
+
+def test_rename_photo_dry_run_does_not_write_catalog_entry(tmp_path):
+    img_path = create_test_image(tmp_path, "original.jpg")
+    catalog_db = tmp_path / "catalog" / "store.db"
+    llm = MockProvider(
+        response='{"description": "golden gate bridge fog", "category": "landscape"}'
+    )
+
+    rename_photo_or_raise(img_path, llm, dry_run=True, catalog_db=catalog_db)
+
+    assert not catalog_db.exists()
