@@ -3,10 +3,10 @@ from pathlib import Path
 from PIL import Image
 from typer.testing import CliRunner
 
-from photo_renamer.logic import (
+from photo_renamer.cli import app
+from photo_renamer.core import (
     EmptyDescriptionError,
     ProviderCallError,
-    app,
     get_short_hash,
     parse_description_and_category,
     rename_photo,

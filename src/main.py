@@ -1,4 +1,4 @@
-from photo_renamer.logic import app
+from photo_renamer.cli import app
 
 if __name__ == "__main__":
     app()

@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-rename-photo = "photo_renamer.logic:app"
+rename-photo = "photo_renamer.cli:app"
 
 [build-system]
 requires = ["hatchling"]
