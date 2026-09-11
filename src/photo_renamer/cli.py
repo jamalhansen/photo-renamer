@@ -1,27 +1,27 @@
 import os
 import sys
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
-from rich.console import Console
-from rich.panel import Panel
-
 from local_first_common.cli import (
     debug_option,
     dry_run_option,
+    init_config_option,
     model_option,
     no_llm_option,
+    pipe_option,
     provider_option,
     resolve_dry_run,
     resolve_provider,
     verbose_option,
-    pipe_option,
-    init_config_option,
 )
 from local_first_common.config import get_setting
 from local_first_common.db import resolve_sync_path
 from local_first_common.tracking import register_tool
+from rich.console import Console
+from rich.panel import Panel
+
 from .core import (
     PhotoRenamerError,
     rename_photo_or_raise,
@@ -39,11 +39,11 @@ app = typer.Typer(
 
 @app.command()
 def rename(
-    path: Optional[Path] = typer.Argument(None, help="File or directory to rename"),
+    path: Annotated[Path | None, typer.Argument(help="File or directory to rename")] = None,
     provider: Annotated[str, provider_option()] = os.environ.get(
         "MODEL_PROVIDER", "ollama"
     ),
-    model: Annotated[Optional[str], model_option()] = None,
+    model: Annotated[str | None, model_option()] = None,
     dry_run: Annotated[bool, dry_run_option()] = False,
     no_llm: Annotated[bool, no_llm_option()] = False,
     verbose: Annotated[bool, verbose_option()] = False,
@@ -57,7 +57,7 @@ def rename(
         ),
     ] = False,
     catalog_db: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option(
             "--catalog-db", help="Catalog database path (default: ~/sync/photo-catalog/store.db)"
         ),

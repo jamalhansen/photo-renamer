@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from local_first_common.testing import MockProvider
 from PIL import Image
 from typer.testing import CliRunner
 
@@ -13,8 +14,6 @@ from photo_renamer.core import (
     rename_photo_or_raise,
     slugify,
 )
-from local_first_common.testing import MockProvider
-
 
 runner = CliRunner()
 

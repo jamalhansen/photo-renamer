@@ -4,15 +4,13 @@ import os
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
-
-from rich.console import Console
 
 from local_first_common.db import init_db
 from local_first_common.llm import parse_json_response, try_xml_parse
 from local_first_common.tracking import timed_run
+from rich.console import Console
 
 console = Console(stderr=True)
 
@@ -106,7 +104,7 @@ def write_catalog_entry(
                     str(current_path),
                     category,
                     description,
-                    datetime.now().isoformat(),
+                    datetime.now(UTC).isoformat(),
                 ),
             )
             conn.commit()
@@ -129,7 +127,7 @@ def get_short_hash(file_path: Path) -> str:
             buf = f.read(1024 * 1024)
             hasher.update(buf)
         return hasher.hexdigest()[:6]
-    except Exception:
+    except Exception:  # noqa: BLE001 - hash is a best-effort collision-avoidance suffix; any read failure should fall back, not crash the rename
         return "000000"
 
 
@@ -139,7 +137,7 @@ def rename_photo_or_raise(
     dry_run: bool = False,
     verbose: bool = False,
     silent: bool = False,
-    catalog_db: Optional[Path] = None,
+    catalog_db: Path | None = None,
 ) -> RenamePhotoResult:
     """Analyze photo with vision LLM, rename based on description, and
     optionally record a catalog row (description + category) if catalog_db
@@ -173,7 +171,7 @@ def rename_photo_or_raise(
                 user_prompt,
                 images=[encoded_image],
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             raise ProviderCallError(
                 f"Model call failed for {image_path.name}: {e}"
             ) from e
@@ -236,8 +234,8 @@ def rename_photo(
     dry_run: bool = False,
     verbose: bool = False,
     silent: bool = False,
-    catalog_db: Optional[Path] = None,
-) -> Optional[Path]:
+    catalog_db: Path | None = None,
+) -> Path | None:
     """Compatibility wrapper for callers that expect Optional[Path]."""
     try:
         result = rename_photo_or_raise(
