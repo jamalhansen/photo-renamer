@@ -8,7 +8,7 @@ dependencies = [
     "click<8.3.2",  # 8.3.2 breaks typer 0.24.1's option parsing: AttributeError 'bool' object has no attribute 'isidentifier'. Unpin once a compatible typer release lands.
     "rich>=14.3.3",
     "pillow>=10.2.0",
-    "local-first-common",
+    "local-first-common[anthropic]",
     "toml>=0.10.2",
 ]
 
