@@ -80,6 +80,7 @@ def rename(
         no_llm=no_llm,
         verbose=verbose,
         debug=debug,
+        tool_name=TOOL_NAME,
     )
     resolved_catalog_db = None
     if catalog:
