@@ -65,6 +65,39 @@ def test_get_short_hash_for_missing_file_returns_zeros(tmp_path):
     assert get_short_hash(missing) == "000000"
 
 
+def test_rename_photo_logs_the_model_resolved_after_the_call(tmp_path):
+    """Regression 2026-09-20: a GatewayProvider with no explicit --model has
+    .model == "" until the gateway resolves it server-side -- that happens
+    *during* llm.complete(), but timed_run()'s model argument was already
+    evaluated (as "") before the call ran. photo-renamer was one of the real
+    tools whose processing_log rows showed up empty because of this."""
+    from local_first_common.tracking import get_tracking_db_path
+
+    class ResolvesModelDuringCall(MockProvider):
+        default_model = ""  # matches GatewayProvider's own real default when no model is specified
+
+        def _complete(self, system, user, response_model=None, images=None):
+            result = super()._complete(system, user, response_model, images)
+            self.model = "phi4-mini"  # simulates the gateway resolving an unspecified model
+            return result
+
+    img_path = create_test_image(tmp_path, "original.jpg")
+    llm = ResolvesModelDuringCall(response="Golden Gate Bridge Fog")
+    assert llm.model == ""
+
+    rename_photo(img_path, llm)
+
+    import duckdb
+
+    conn = duckdb.connect(str(get_tracking_db_path()))
+    row = conn.execute(
+        "SELECT model, provider FROM processing_log WHERE tool_name = 'photo-renamer' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+    assert row[0] == "phi4-mini"
+    assert row[1] == "mock"
+
+
 def test_rename_photo_returns_none_when_description_missing(tmp_path):
     img_path = create_test_image(tmp_path, "original.jpg")
     llm = MockProvider(response="")

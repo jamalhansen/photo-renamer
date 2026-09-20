@@ -176,6 +176,11 @@ def rename_photo_or_raise(
                 f"Model call failed for {image_path.name}: {e}"
             ) from e
         _run.item_count = 1
+        # llm.model was "" at timed_run() call time for a GatewayProvider with
+        # no explicit --model -- re-read both now that the call has resolved
+        # it (provider too, in case a FallbackProvider switched legs mid-call).
+        _run.model = llm.model
+        _run.provider = getattr(llm, "provider_name", None)
 
     if not raw_response:
         raise EmptyDescriptionError(
