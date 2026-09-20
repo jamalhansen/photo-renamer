@@ -28,7 +28,12 @@ from .core import (
 )
 
 TOOL_NAME = "photo-renamer"
-DEFAULTS = {"provider": "ollama", "model": "llama3"}
+# No vision-capable Ollama model is a safe default -- unlike text generation,
+# this tool's entire job is describing an image, and a text-only local model
+# either ignores the image or returns something that fails to parse. Anthropic
+# is the proven-working default (verified live 2026-09-20); if a local vision
+# model (e.g. llava) is ever pulled, override with --provider ollama --model llava.
+DEFAULTS = {"provider": "anthropic", "model": None}
 _TOOL = register_tool(TOOL_NAME)
 
 console = Console(stderr=True)  # Rich output to stderr
@@ -41,7 +46,7 @@ app = typer.Typer(
 def rename(
     path: Annotated[Path | None, typer.Argument(help="File or directory to rename")] = None,
     provider: Annotated[str, provider_option()] = os.environ.get(
-        "MODEL_PROVIDER", "ollama"
+        "MODEL_PROVIDER", DEFAULTS["provider"]
     ),
     model: Annotated[str | None, model_option()] = None,
     dry_run: Annotated[bool, dry_run_option()] = False,
@@ -65,7 +70,7 @@ def rename(
 ):
     """Analyze photos and rename them with descriptive slugs."""
     actual_provider = get_setting(
-        TOOL_NAME, "provider", cli_val=provider, default="ollama"
+        TOOL_NAME, "provider", cli_val=provider, default=DEFAULTS["provider"]
     )
     actual_model = get_setting(TOOL_NAME, "model", cli_val=model)
     dry_run = resolve_dry_run(dry_run, no_llm)
