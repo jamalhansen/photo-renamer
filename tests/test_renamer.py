@@ -65,37 +65,20 @@ def test_get_short_hash_for_missing_file_returns_zeros(tmp_path):
     assert get_short_hash(missing) == "000000"
 
 
-def test_rename_photo_logs_the_model_resolved_after_the_call(tmp_path):
-    """Regression 2026-09-20: a GatewayProvider with no explicit --model has
-    .model == "" until the gateway resolves it server-side -- that happens
-    *during* llm.complete(), but timed_run()'s model argument was already
-    evaluated (as "") before the call ran. photo-renamer was one of the real
-    tools whose processing_log rows showed up empty because of this."""
-    from local_first_common.tracking import get_tracking_db_path
-
-    class ResolvesModelDuringCall(MockProvider):
-        default_model = ""  # matches GatewayProvider's own real default when no model is specified
-
-        def _complete(self, system, user, response_model=None, images=None):
-            result = super()._complete(system, user, response_model, images)
-            self.model = "phi4-mini"  # simulates the gateway resolving an unspecified model
-            return result
-
+def test_rename_photo_sets_source_location_and_item_count_before_the_call(tmp_path):
+    """Regression 2026-09-20: an LLM call is logged once, inside the
+    gateway -- photo-renamer used to keep its own duplicate processing_log
+    row via timed_run(), re-reading .model/.provider_name after the call to
+    work around a GatewayProvider resolving mid-call. source_location/
+    item_count now travel to the gateway via llm.source_location/
+    llm.item_count instead, set before the call."""
     img_path = create_test_image(tmp_path, "original.jpg")
-    llm = ResolvesModelDuringCall(response="Golden Gate Bridge Fog")
-    assert llm.model == ""
+    llm = MockProvider(response="Golden Gate Bridge Fog")
 
     rename_photo(img_path, llm)
 
-    import duckdb
-
-    conn = duckdb.connect(str(get_tracking_db_path()))
-    row = conn.execute(
-        "SELECT model, provider FROM processing_log WHERE tool_name = 'photo-renamer' ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    conn.close()
-    assert row[0] == "phi4-mini"
-    assert row[1] == "mock"
+    assert llm.source_location == img_path.as_posix()
+    assert llm.item_count == 1
 
 
 def test_rename_photo_returns_none_when_description_missing(tmp_path):

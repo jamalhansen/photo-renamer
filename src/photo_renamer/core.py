@@ -9,7 +9,6 @@ from pathlib import Path
 
 from local_first_common.db import init_db
 from local_first_common.llm import parse_json_response, try_xml_parse
-from local_first_common.tracking import timed_run
 from rich.console import Console
 
 console = Console(stderr=True)
@@ -162,25 +161,18 @@ def rename_photo_or_raise(
     except OSError as e:
         raise PhotoRenamerError(f"Could not read {image_path.name}: {e}") from e
 
-    with timed_run(
-        "photo-renamer", llm.model, source_location=image_path.as_posix()
-    ) as _run:
-        try:
-            raw_response = llm.complete(
-                system_prompt,
-                user_prompt,
-                images=[encoded_image],
-            )
-        except Exception as e:
-            raise ProviderCallError(
-                f"Model call failed for {image_path.name}: {e}"
-            ) from e
-        _run.item_count = 1
-        # llm.model was "" at timed_run() call time for a GatewayProvider with
-        # no explicit --model -- re-read both now that the call has resolved
-        # it (provider too, in case a FallbackProvider switched legs mid-call).
-        _run.model = llm.model
-        _run.provider = getattr(llm, "provider_name", None)
+    llm.source_location = image_path.as_posix()
+    llm.item_count = 1
+    try:
+        raw_response = llm.complete(
+            system_prompt,
+            user_prompt,
+            images=[encoded_image],
+        )
+    except Exception as e:
+        raise ProviderCallError(
+            f"Model call failed for {image_path.name}: {e}"
+        ) from e
 
     if not raw_response:
         raise EmptyDescriptionError(
