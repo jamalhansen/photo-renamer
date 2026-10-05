@@ -37,17 +37,13 @@ DEFAULTS = {"provider": "anthropic", "model": None}
 _TOOL = register_tool(TOOL_NAME)
 
 console = Console(stderr=True)  # Rich output to stderr
-app = typer.Typer(
-    help="Uses a vision model to generate descriptive filenames for photos."
-)
+app = typer.Typer(help="Uses a vision model to generate descriptive filenames for photos.")
 
 
 @app.command()
 def rename(
     path: Annotated[Path | None, typer.Argument(help="File or directory to rename")] = None,
-    provider: Annotated[str, provider_option()] = os.environ.get(
-        "MODEL_PROVIDER", DEFAULTS["provider"]
-    ),
+    provider: Annotated[str, provider_option()] = os.environ.get("MODEL_PROVIDER", DEFAULTS["provider"]),
     model: Annotated[str | None, model_option()] = None,
     dry_run: Annotated[bool, dry_run_option()] = False,
     no_llm: Annotated[bool, no_llm_option()] = False,
@@ -57,21 +53,15 @@ def rename(
     init_config: Annotated[bool, init_config_option(TOOL_NAME, DEFAULTS)] = False,
     catalog: Annotated[
         bool,
-        typer.Option(
-            "--catalog", help="Record a catalog row (description + category) for each rename"
-        ),
+        typer.Option("--catalog", help="Record a catalog row (description + category) for each rename"),
     ] = False,
     catalog_db: Annotated[
         Path | None,
-        typer.Option(
-            "--catalog-db", help="Catalog database path (default: ~/sync/photo-catalog/store.db)"
-        ),
+        typer.Option("--catalog-db", help="Catalog database path (default: ~/sync/photo-catalog/store.db)"),
     ] = None,
 ):
     """Analyze photos and rename them with descriptive slugs."""
-    actual_provider = get_setting(
-        TOOL_NAME, "provider", cli_val=provider, default=DEFAULTS["provider"]
-    )
+    actual_provider = get_setting(TOOL_NAME, "provider", cli_val=provider, default=DEFAULTS["provider"])
     actual_model = get_setting(TOOL_NAME, "model", cli_val=model)
     dry_run = resolve_dry_run(dry_run, no_llm)
     llm = resolve_provider(
@@ -84,9 +74,7 @@ def rename(
     )
     resolved_catalog_db = None
     if catalog:
-        resolved_catalog_db = catalog_db or resolve_sync_path(
-            "photo-catalog", "store.db"
-        )
+        resolved_catalog_db = catalog_db or resolve_sync_path("photo-catalog", "store.db")
 
     # Handle stdin for piping
     files_to_process = []
@@ -147,13 +135,9 @@ def rename(
 
     if not pipe:
         if not dry_run:
-            console.print(
-                f"\n[bold green]Done! Renamed {renamed_count} photos.[/bold green]"
-            )
+            console.print(f"\n[bold green]Done! Renamed {renamed_count} photos.[/bold green]")
         else:
-            console.print(
-                f"\n[yellow][dry-run] Would have renamed {renamed_count} photos.[/yellow]"
-            )
+            console.print(f"\n[yellow][dry-run] Would have renamed {renamed_count} photos.[/yellow]")
 
 
 if __name__ == "__main__":

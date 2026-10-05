@@ -145,10 +145,7 @@ def rename_photo_or_raise(
     if verbose and not silent:
         console.print(f"[dim]Analyzing {image_path.name}...[/dim]")
 
-    system_prompt = (
-        "You are a helpful assistant that describes images for file naming "
-        "and cataloging purposes."
-    )
+    system_prompt = "You are a helpful assistant that describes images for file naming and cataloging purposes."
     user_prompt = (
         "Look at this image and respond with a JSON object with exactly two "
         'fields: "description" (4 to 6 descriptive words suitable for a '
@@ -170,20 +167,14 @@ def rename_photo_or_raise(
             images=[encoded_image],
         )
     except Exception as e:
-        raise ProviderCallError(
-            f"Model call failed for {image_path.name}: {e}"
-        ) from e
+        raise ProviderCallError(f"Model call failed for {image_path.name}: {e}") from e
 
     if not raw_response:
-        raise EmptyDescriptionError(
-            f"Model returned no description for {image_path.name}"
-        )
+        raise EmptyDescriptionError(f"Model returned no description for {image_path.name}")
 
     description, category = parse_description_and_category(raw_response)
     if not description:
-        raise EmptyDescriptionError(
-            f"Model returned no usable description for {image_path.name}"
-        )
+        raise EmptyDescriptionError(f"Model returned no usable description for {image_path.name}")
 
     slug = slugify(description)
     h = get_short_hash(image_path)
@@ -193,19 +184,14 @@ def rename_photo_or_raise(
     if dry_run:
         if not silent:
             console.print(
-                f"[yellow][dry-run] Would rename {image_path.name} -> {new_name} "
-                f"(category: {category})[/yellow]"
+                f"[yellow][dry-run] Would rename {image_path.name} -> {new_name} (category: {category})[/yellow]"
             )
-        return RenamePhotoResult(
-            path=new_path, action="dry_run", description=description, category=category
-        )
+        return RenamePhotoResult(path=new_path, action="dry_run", description=description, category=category)
 
     if image_path.name == new_name:
         if not silent:
             console.print(f"[dim]{image_path.name} is already correctly named.[/dim]")
-        return RenamePhotoResult(
-            path=image_path, action="unchanged", description=description, category=category
-        )
+        return RenamePhotoResult(path=image_path, action="unchanged", description=description, category=category)
 
     try:
         os.rename(image_path, new_path)
@@ -216,13 +202,8 @@ def rename_photo_or_raise(
         write_catalog_entry(catalog_db, image_path, new_path, category, description)
 
     if not silent:
-        console.print(
-            f"[green]Renamed {image_path.name} -> {new_name}[/green] "
-            f"[dim](category: {category})[/dim]"
-        )
-    return RenamePhotoResult(
-        path=new_path, action="renamed", description=description, category=category
-    )
+        console.print(f"[green]Renamed {image_path.name} -> {new_name}[/green] [dim](category: {category})[/dim]")
+    return RenamePhotoResult(path=new_path, action="renamed", description=description, category=category)
 
 
 def rename_photo(

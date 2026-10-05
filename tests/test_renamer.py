@@ -207,18 +207,14 @@ def test_rename_photo_writes_catalog_entry(tmp_path):
 
     img_path = create_test_image(tmp_path, "original.jpg")
     catalog_db = tmp_path / "catalog" / "store.db"
-    llm = MockProvider(
-        response='{"description": "golden gate bridge fog", "category": "landscape"}'
-    )
+    llm = MockProvider(response='{"description": "golden gate bridge fog", "category": "landscape"}')
 
     result = rename_photo_or_raise(img_path, llm, catalog_db=catalog_db)
 
     assert catalog_db.exists()
     conn = sqlite3.connect(str(catalog_db))
     try:
-        row = conn.execute(
-            "SELECT original_path, current_path, category, description FROM photos"
-        ).fetchone()
+        row = conn.execute("SELECT original_path, current_path, category, description FROM photos").fetchone()
     finally:
         conn.close()
 
@@ -232,9 +228,7 @@ def test_rename_photo_writes_catalog_entry(tmp_path):
 def test_rename_photo_dry_run_does_not_write_catalog_entry(tmp_path):
     img_path = create_test_image(tmp_path, "original.jpg")
     catalog_db = tmp_path / "catalog" / "store.db"
-    llm = MockProvider(
-        response='{"description": "golden gate bridge fog", "category": "landscape"}'
-    )
+    llm = MockProvider(response='{"description": "golden gate bridge fog", "category": "landscape"}')
 
     rename_photo_or_raise(img_path, llm, dry_run=True, catalog_db=catalog_db)
 
