@@ -33,7 +33,8 @@ TOOL_NAME = "photo-renamer"
 # either ignores the image or returns something that fails to parse. Anthropic
 # is the proven-working default (verified live 2026-09-20); if a local vision
 # model (e.g. llava) is ever pulled, override with --provider ollama --model llava.
-DEFAULTS = {"provider": "anthropic", "model": None}
+DEFAULT_PROVIDER = "anthropic"
+DEFAULTS = {"provider": DEFAULT_PROVIDER, "model": None}
 _TOOL = register_tool(TOOL_NAME)
 
 console = Console(stderr=True)  # Rich output to stderr
@@ -43,7 +44,7 @@ app = typer.Typer(help="Uses a vision model to generate descriptive filenames fo
 @app.command()
 def rename(
     path: Annotated[Path | None, typer.Argument(help="File or directory to rename")] = None,
-    provider: Annotated[str, provider_option()] = os.environ.get("MODEL_PROVIDER", DEFAULTS["provider"]),
+    provider: Annotated[str, provider_option()] = os.environ.get("MODEL_PROVIDER", DEFAULT_PROVIDER),
     model: Annotated[str | None, model_option()] = None,
     dry_run: Annotated[bool, dry_run_option()] = False,
     no_llm: Annotated[bool, no_llm_option()] = False,
